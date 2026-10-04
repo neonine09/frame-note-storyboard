@@ -4,3 +4,4 @@ node_modules/
 project-records/
 test-results/
 *.log
+worker/

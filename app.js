@@ -1,5 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
+const SERVER_API = 'https://lotto-custom-api.killu800.workers.dev/storyboard';
+const useServer = () => $('connectionMode').value === 'server';
 const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const example = '비가 내리는 미래 도시. 오래된 휴머노이드가 잃어버린 주인을 찾아 골목을 걷는다. 첫 3초, 낡은 사진 속 아이의 얼굴과 지나가는 할머니의 얼굴이 겹친다. 로봇은 사진을 확인하고 할머니를 따라간다. 버스 정류장에서 둘은 서로를 알아본다. 할머니가 로봇의 손을 잡는 순간 꺼져가던 눈에 빛이 돌아온다. 이별과 재회, 기억과 희망을 담은 조용한 SF 드라마.';
 const styleMap = {
@@ -17,20 +19,22 @@ function fillExample(){$('prompt').value=example;$('prompt').dispatchEvent(new E
 $('exampleBtn').onclick=fillExample;$('emptyExample').onclick=fillExample;
 $('prompt').oninput=()=>$('charCount').textContent=$('prompt').value.length.toLocaleString()+' / 12,000';
 $('settingsBtn').onclick=()=>$('settings').showModal();$('guideBtn').onclick=()=>$('guide').showModal();
-$('saveSettings').onclick=()=>{if(!$('apiKey').value.trim()){toast('API 키를 입력해주세요.');return;}$('settings').close();toast('연결 설정을 적용했습니다. 생성 시 API를 확인합니다.');};
+$('connectionMode').onchange=()=>{$('ownKeyFields').hidden=useServer();};
+$('saveSettings').onclick=()=>{if(!useServer()&&!$('apiKey').value.trim()){toast('API 키를 입력해주세요.');return;}$('settings').close();toast(useServer()?'기존 Gemini 서버 연결을 사용합니다.':'본인 API 키 연결을 적용했습니다.');};
 for(const dialog of document.querySelectorAll('dialog')){dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});}
 $('reference').onchange=async()=>{const file=$('reference').files[0];if(!file)return;if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>8*1024*1024){toast('PNG / JPG / WebP, 8MB 이하 이미지를 선택해주세요.');$('reference').value='';return;}try{const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});await loadImage(data);reference={mimeType:file.type,data:data.split(',')[1],url:data};$('refImage').src=data;$('refPreview').hidden=false;}catch{toast('이미지를 읽을 수 없습니다.');$('reference').value='';}};
 $('removeRef').onclick=()=>{reference=null;$('reference').value='';$('refPreview').hidden=true;$('refImage').removeAttribute('src');};
 $('cancelBtn').onclick=()=>controller?.abort();
 async function api(model,parts,config,signal){
-  const key=$('apiKey').value.trim();if(!key)throw new Error('API 연결에서 Gemini API 키를 입력해주세요.');
+  const key=$('apiKey').value.trim();if(!useServer()&&!key)throw new Error('API 연결에서 Gemini API 키를 입력해주세요.');
   if(!/^[a-zA-Z0-9._-]+$/.test(model))throw new Error('모델 이름을 확인해주세요.');
   const timeout=new AbortController();const timer=setTimeout(()=>timeout.abort(),180000);const abort=()=>timeout.abort();signal?.addEventListener('abort',abort,{once:true});
   try{
     if(signal?.aborted)throw new DOMException('Aborted','AbortError');
-    const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:config}),signal:timeout.signal});
+    const server=useServer();
+    const response=await fetch(server?`${SERVER_API}/generate`:`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json',...(!server?{'x-goog-api-key':key}:{})},body:JSON.stringify({...(server?{model}:{}),contents:[{role:'user',parts}],generationConfig:config}),signal:timeout.signal});
     const data=await response.json();
-    if(!response.ok){const reasons={400:'요청이 거절되었습니다. API 키와 모델 설정을 확인해주세요.',401:'API 키가 올바르지 않습니다.',403:'이 키로 모델을 사용할 권한이 없습니다. API 설정과 결제 연결을 확인해주세요.',404:'선택한 모델을 찾을 수 없습니다. API 연결에서 다른 모델을 선택해주세요.',429:'API 할당량을 초과했습니다. 결제·사용량을 확인하거나 잠시 후 재시도해주세요.',500:'Google 이미지 생성 서버 오류입니다. 잠시 후 재시도해주세요.',503:'모델이 혼잡합니다. 잠시 후 재시도해주세요.'};throw new Error(reasons[response.status]||`API 요청 실패 (${response.status})`);}
+    if(!response.ok){const reasons={400:'요청이 거절되었습니다. API 키와 모델 설정을 확인해주세요.',401:'API 키가 올바르지 않습니다.',403:'이 키로 모델을 사용할 권한이 없습니다. API 설정과 결제 연결을 확인해주세요.',404:'선택한 모델을 찾을 수 없습니다. API 연결에서 다른 모델을 선택해주세요.',429:'API 할당량을 초과했습니다. 결제·사용량을 확인하거나 잠시 후 재시도해주세요.',500:'Google 이미지 생성 서버 오류입니다. 잠시 후 재시도해주세요.',503:'모델이 혼잡합니다. 잠시 후 재시도해주세요.'};throw new Error(server&&data.error?.message?data.error.message:reasons[response.status]||`API 요청 실패 (${response.status})`);}
     if(data.promptFeedback?.blockReason)throw new Error('입력 내용이 모델의 안전 정책으로 차단되었습니다. 프롬프트를 수정해주세요.');
     const output=data.candidates?.[0]?.content?.parts;if(!output?.length)throw new Error('모델이 결과를 반환하지 않았습니다. 프롬프트를 조정해주세요.');return output;
   }catch(e){if(e.name==='AbortError'&&!signal?.aborted)throw new Error('요청 시간이 초과되었습니다. 잠시 후 재시도해주세요.');if(e instanceof TypeError)throw new Error('Google API 연결 실패. 인터넷 연결 또는 브라우저 네트워크 제한을 확인해주세요.');throw e;}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
@@ -89,10 +93,16 @@ No panel borders, letters, captions, logos, watermarks or black bars. Detailed e
   }catch(e){shot.state='error';shot.error=e.name==='AbortError'?'생성을 중단했습니다.':e.message;if(e.name==='AbortError')throw e;}finally{render();}
 }
 $('storyForm').onsubmit=async e=>{
-  e.preventDefault();if(busy)return;if(!$('apiKey').value.trim()){$('settings').showModal();status('실제 스케치 생성을 위해 API 키를 연결해주세요.','error');return;}
+  e.preventDefault();if(busy)return;if(!useServer()&&!$('apiKey').value.trim()){$('settings').showModal();status('실제 스케치 생성을 위해 API 키를 연결해주세요.','error');return;}
   const input={prompt:$('prompt').value.trim(),count:Number($('count').value),ratio:$('ratio').value,style:$('style').value,continuity:$('continuity').value.trim(),imageModel:$('imageModel').value,textModel:$('textModel').value.trim()};if(!input.prompt)return;
   controller=new AbortController();setBusy(true);status('1단계 · 이야기와 인물 일관성을 분석해 상세 컷 계획을 만들고 있습니다…');
   try{
+    if(useServer()){
+      const healthResponse=await fetch(`${SERVER_API}/health`,{signal:controller.signal});
+      if(!healthResponse.ok)throw new Error('기존 Gemini 서버 연결을 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
+      const health=await healthResponse.json();if(!health.ready)throw new Error('서버의 Gemini API 연결이 준비되지 않았습니다.');
+      if(input.textModel==='gemini-2.5-flash'&&health.textModel)input.textModel=health.textModel;
+    }
     const parts=[{text:planPrompt(input)}];if(reference)parts.push({inlineData:{mimeType:reference.mimeType,data:reference.data}});
     const output=await api(input.textModel,parts,{responseMimeType:'application/json',temperature:0.7},controller.signal);
     const raw=output.filter(p=>p.text&&!p.thought).map(p=>p.text).join('');let plan;try{plan=JSON.parse(raw.replace(/^\s*```(?:json)?\s*/,'').replace(/\s*```\s*$/,''));}catch{throw new Error('컷 계획을 해석할 수 없습니다. 다시 생성해주세요.');}validatePlan(plan,input.count);
@@ -115,7 +125,7 @@ $('results').onclick=async e=>{
   if(btn.dataset.copy!==undefined){await copy(board.shots[Number(btn.dataset.copy)][btn.dataset.field]);}
   if(btn.dataset.view!==undefined){const i=Number(btn.dataset.view);$('viewerTitle').textContent=`컷 ${i+1} · ${board.shots[i].title}`;$('viewerImage').src=board.shots[i].image;$('imageViewer').showModal();}
   if(btn.dataset.download!==undefined){const i=Number(btn.dataset.download);const src=board.shots[i].image;download(src,`storyboard-cut-${i+1}.${src.startsWith('data:image/jpeg')?'jpg':src.startsWith('data:image/webp')?'webp':'png'}`);}
-  if(btn.dataset.retry!==undefined&&!busy){if(!$('apiKey').value.trim()){$('settings').showModal();return;}controller=new AbortController();setBusy(true);const i=Number(btn.dataset.retry);status(`컷 ${i+1} 이미지 재시도 중…`);try{await generateImage(i,controller.signal);status(board.shots[i].image?`컷 ${i+1} 스케치를 생성했습니다.`:board.shots[i].error,board.shots[i].image?'success':'error');}catch{status('생성을 중단했습니다.','error');}finally{setBusy(false);controller=null;}}
+  if(btn.dataset.retry!==undefined&&!busy){if(!useServer()&&!$('apiKey').value.trim()){$('settings').showModal();return;}controller=new AbortController();setBusy(true);board.input.imageModel=$('imageModel').value;const i=Number(btn.dataset.retry);status(`컷 ${i+1} 이미지 재시도 중…`);try{await generateImage(i,controller.signal);status(board.shots[i].image?`컷 ${i+1} 스케치를 생성했습니다.`:board.shots[i].error,board.shots[i].image?'success':'error');}catch{status('생성을 중단했습니다.','error');}finally{setBusy(false);controller=null;}}
 };
 async function copy(text){try{await navigator.clipboard.writeText(text);toast('복사했습니다.');}catch{toast('클립보드 접근이 제한됩니다. 프롬프트를 직접 선택해 복사해주세요.');}}
 function download(url,name){const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();}
